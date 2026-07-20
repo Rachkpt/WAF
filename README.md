@@ -39,18 +39,38 @@ de ce repo directement sur Internet sans l'avoir durcie et auditée toi-même.
 
 ---
 
-## 🚀 Démarrage rapide
+## 🚀 Installation — deux méthodes au choix
+
+### Option A — Script automatique (rapide, recommandé)
 
 ```bash
-# 1. Installer le WAF (relançable pour mettre à jour)
 sudo ./install-waf.sh
-
-# 2. Déployer une cible volontairement vulnérable derrière, pour tester
-cd vuln-app && sudo ./deploy-vuln-app.sh
-
-# 3. Attaquer la cible et vérifier que le WAF bloque (403)
-curl -s "http://VM_IP:8081/search?q=<script>alert(1)</script>"
 ```
+
+Une seule commande : installe et configure tout (Nginx, ModSecurity v3, connecteur, OWASP CRS).
+Relançable à volonté pour mettre à jour. Personnalisable via des options
+(`--domain`, `--port`, `--paranoia`, `--detection-only`, ...). Détail complet des options et
+exemples : [`docs/SCRIPTS.md`](docs/SCRIPTS.md).
+
+### Option B — Installation manuelle (pour comprendre / débugger)
+
+Les 10 étapes détaillées (dépendances, compilation ModSecurity, module Nginx, config CRS, site
+Nginx...) sont documentées commande par commande dans
+[`docs/CONFIGURATION.md`](docs/CONFIGURATION.md). C'est exactement ce que fait le script
+ci-dessus, mais à la main — utile pour comprendre ce qui se passe, adapter une étape précise, ou
+diagnostiquer une erreur de compilation.
+
+> Les deux méthodes aboutissent à la même config (`/etc/modsecurity/`, `/etc/nginx/`) — tu peux
+> commencer en manuel puis basculer sur le script (ou l'inverse) sans conflit.
+
+### Ensuite — valider que le WAF bloque vraiment
+
+```bash
+cd vuln-app && sudo ./deploy-vuln-app.sh   # cible volontairement vulnérable, derrière le WAF
+curl -s "http://VM_IP:8081/search?q=<script>alert(1)</script>"   # doit renvoyer 403
+```
+
+Méthodologie complète et payloads par type de faille : [`vuln-app/README.md`](vuln-app/README.md).
 
 ---
 
