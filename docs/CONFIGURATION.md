@@ -90,6 +90,13 @@ echo "Version Nginx : $NGINX_VERSION"
 
 # Récupérer les arguments de configure utilisés pour compiler le Nginx installé
 NGINX_CONFIGURE_ARGS=$(nginx -V 2>&1 | grep 'configure arguments:' | sed 's/configure arguments: //')
+
+# Retirer les --add-dynamic-module=debian/modules/xxx : ce sont d'autres modules
+# tiers empaquetés par Debian/Ubuntu (ex: http-geoip2), dont le chemin est relatif
+# à l'arbre de build interne de Debian et n'existe pas dans le tarball nginx.org
+# qu'on télécharge nous-mêmes. Sans ce filtrage, ./configure échoue avec
+# "no .../debian/modules/http-geoip2/config was found".
+NGINX_CONFIGURE_ARGS=$(echo "$NGINX_CONFIGURE_ARGS" | sed -E 's/--add-dynamic-module=[^ ]+//g')
 echo "Arguments : $NGINX_CONFIGURE_ARGS"
 
 # Télécharger les sources Nginx correspondantes

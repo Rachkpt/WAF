@@ -200,6 +200,13 @@ build_nginx_module() {
     local args
     args=$(nginx -V 2>&1 | grep 'configure arguments:' | sed 's/configure arguments: //')
 
+    # Le nginx packagé Debian/Ubuntu embarque souvent d'autres modules tiers via
+    # --add-dynamic-module=debian/modules/xxx (ex: http-geoip2), un chemin relatif
+    # à l'arbre de build interne de Debian qui n'existe pas dans le tarball nginx.org
+    # qu'on télécharge nous-mêmes. On les retire : on n'a besoin d'ajouter que le
+    # nôtre (ModSecurity-nginx), pas de recompiler les leurs.
+    args=$(echo "$args" | sed -E 's/--add-dynamic-module=[^ ]+//g')
+
     cd "$INSTALL_DIR"
     rm -rf "nginx-${CUR_NGINX_VERSION}" "nginx-${CUR_NGINX_VERSION}.tar.gz"
     wget -q "http://nginx.org/download/nginx-${CUR_NGINX_VERSION}.tar.gz"
