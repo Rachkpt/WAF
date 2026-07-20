@@ -10,7 +10,7 @@ import os
 import sqlite3
 import subprocess
 
-from flask import Flask, Response, redirect, request, send_file
+from flask import Flask, Response, redirect, render_template, request, send_file
 
 app = Flask(__name__)
 
@@ -34,19 +34,7 @@ def init_db():
 
 @app.route("/")
 def index():
-    return """
-    <h1>Vuln-App — cible de test WAF</h1>
-    <ul>
-      <li><a href="/search?q=test">/search?q=</a> — XSS réfléchi</li>
-      <li>POST /login (username, password) — injection SQL</li>
-      <li><a href="/file?name=welcome.txt">/file?name=</a> — path traversal / LFI</li>
-      <li><a href="/ping?host=127.0.0.1">/ping?host=</a> — injection de commande</li>
-      <li><a href="/redirect?url=https://example.com">/redirect?url=</a> — open redirect</li>
-      <li><a href="/fetch?url=http://127.0.0.1:5000/">/fetch?url=</a> — SSRF</li>
-      <li>POST /upload (multipart "file") — upload sans validation</li>
-      <li>POST /xml (corps XML) — XXE</li>
-    </ul>
-    """
+    return render_template("index.html")
 
 
 # ---- XSS réfléchi : aucun échappement du paramètre ----
