@@ -78,10 +78,12 @@ cd vuln-app
 sudo ./deploy-vuln-app.sh --port 8081
 ```
 
-Nécessite que `install-waf.sh` ait déjà tourné (le WAF doit exister avant de mettre une cible
-derrière). Installe Vuln-App comme service systemd (`vuln-app.service`, isolé sur
-`127.0.0.1:5000`) et un site Nginx dédié sur le port choisi, protégé par le même
-`/etc/modsecurity/main.conf` que le reste du repo.
+Fonctionne dans les deux ordres. Installe toujours Vuln-App comme service systemd
+(`vuln-app.service`, isolé sur `127.0.0.1:5000`). Si `install-waf.sh` a déjà tourné
+(`/etc/modsecurity/main.conf` présent), ajoute en plus un site Nginx dédié sur le port choisi,
+protégé par ce même `main.conf`. Sinon, l'app reste accessible en direct sur `127.0.0.1:5000`
+pour prouver qu'elle est vulnérable avant d'installer le WAF — relance le script après
+`install-waf.sh` pour brancher le site protégé.
 
 | Option | Effet | Défaut |
 |--------|-------|--------|

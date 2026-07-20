@@ -10,30 +10,41 @@ Pour vérifier qu'un WAF « marche vraiment », il ne suffit pas de lire la conf
 l'attaquer avec de vrais payloads contre une cible réellement exploitable, et confirmer que
 c'est bien **ModSecurity qui bloque (403)**, pas l'application qui se défend elle-même.
 
-## Déploiement
+## Déploiement — marche dans les deux ordres
 
-Nécessite que `install-waf.sh` (à la racine du repo) ait déjà tourné.
+`deploy-vuln-app.sh` déploie toujours l'app (service systemd, écoute `127.0.0.1:5000`). Il détecte
+tout seul si le WAF est déjà là :
 
 ```bash
 cd vuln-app
 sudo ./deploy-vuln-app.sh --port 8081
 ```
 
-Ça installe Vuln-App comme service systemd (`vuln-app.service`, écoute 127.0.0.1:5000), et crée
-un site Nginx dédié sur le port choisi, protégé par le **même** `main.conf` ModSecurity que le
-reste du repo.
+- **Pas de WAF installé** → l'app tourne sur `127.0.0.1:5000`, aucune config Nginx créée. Teste
+  directement en local, hors WAF, pour prouver qu'elle est vraiment exploitable.
+- **`install-waf.sh` déjà exécuté** (`/etc/modsecurity/main.conf` présent) → un site Nginx dédié
+  est en plus créé sur le port choisi, protégé par le **même** `main.conf` ModSecurity que le
+  reste du repo.
 
-## Méthodologie de test (le principe demandé)
+## Méthodologie de test (le principe demandé) : vulnérable d'abord, WAF ensuite
 
-1. **Prouver que l'app est vraiment vulnérable** — passe ModSecurity en mode détection
-   (`sudo ./install-waf.sh --detection-only`) ou attaque directement `127.0.0.1:5000` depuis la
-   VM (hors WAF). Les payloads ci-dessous doivent **réussir**.
-2. **Repasse en mode blocage** — `sudo ./install-waf.sh` (mode `On` par défaut).
-3. **Relance les mêmes payloads contre le port Nginx** (`8081` par défaut). Ils doivent
-   maintenant renvoyer **403**.
+1. **Déploie et prouve que l'app est vraiment vulnérable, sans WAF** :
+   ```bash
+   cd vuln-app && sudo ./deploy-vuln-app.sh
+   curl -s "http://127.0.0.1:5000/search?q=<script>alert(1)</script>"
+   ```
+   (payloads complets ci-dessous, à pointer sur `127.0.0.1:5000` à cette étape). Ils doivent
+   **réussir**.
+2. **Installe le WAF** — `sudo ./install-waf.sh` (mode `On`/blocage par défaut) depuis la racine
+   du repo.
+3. **Relance le déploiement pour brancher le site protégé** — `sudo ./deploy-vuln-app.sh --port
+   8081`, il détecte le WAF cette fois et crée le site Nginx.
+4. **Relance les mêmes payloads, cette fois contre le port Nginx** (`8081` par défaut, remplace
+   `127.0.0.1:5000` par `VM_IP:8081` dans les commandes ci-dessous). Ils doivent maintenant
+   renvoyer **403**.
 
 Si étape 1 échoue → l'app n'est pas vulnérable, le test ne prouve rien.
-Si étape 3 échoue → le WAF ne bloque pas, c'est un vrai problème de config à corriger.
+Si étape 4 échoue → le WAF ne bloque pas, c'est un vrai problème de config à corriger.
 
 ## Payloads de test
 
