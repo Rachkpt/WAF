@@ -10,7 +10,7 @@ import os
 import sqlite3
 import subprocess
 
-from flask import Flask, Response, redirect, render_template, request, send_file
+from flask import Flask, Response, redirect, request, send_file
 
 app = Flask(__name__)
 
@@ -34,7 +34,31 @@ def init_db():
 
 @app.route("/")
 def index():
-    return render_template("index.html")
+    return """
+    <!doctype html>
+    <html><head><meta charset="utf-8"><title>Vuln-App</title>
+    <style>
+      body { font-family: monospace; background: #111; color: #eee; padding: 30px; }
+      input { width: 60%; padding: 8px; }
+      button { padding: 8px 14px; }
+      pre { background: #000; padding: 10px; white-space: pre-wrap; word-break: break-all; }
+    </style></head>
+    <body>
+      <h1>Vuln-App</h1>
+      <p>Tape n'importe quoi (payload XSS, SQLi, chemin, etc.) et regarde le résultat brut.</p>
+      <input id="q" type="text" placeholder="ex: &lt;script&gt;alert(1)&lt;/script&gt;">
+      <button onclick="test()">Tester</button>
+      <pre id="result"></pre>
+      <script>
+        async function test() {
+          const q = document.getElementById('q').value;
+          const res = await fetch('/search?q=' + encodeURIComponent(q));
+          const text = await res.text();
+          document.getElementById('result').textContent = 'Status: ' + res.status + '\\n\\n' + text;
+        }
+      </script>
+    </body></html>
+    """
 
 
 # ---- XSS réfléchi : aucun échappement du paramètre ----

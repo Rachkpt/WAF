@@ -37,10 +37,10 @@ Le script affiche l'URL exacte à la fin (IP de la VM détectée automatiquement
    ```bash
    cd vuln-app && sudo ./deploy-vuln-app.sh
    ```
-   Ouvre `http://IP_VM:8081/` dans un navigateur : une carte par faille, avec un formulaire pré-
-   rempli, un bouton "Tester" (affiche la réponse brute + un badge 🚫 bloqué / ✅ passé), et pour
-   XSS/open redirect un bouton "Ouvrir en vrai" qui exécute réellement le payload dans un nouvel
-   onglet. Ou teste en ligne de commande (payloads complets ci-dessous). Ça doit **réussir**.
+   Ouvre `http://IP_VM:8081/` dans un navigateur : une barre de recherche unique, tape n'importe
+   quel payload dedans (XSS, etc.), le résultat brut s'affiche en dessous. Pour les autres
+   endpoints (SQLi, LFI, SSRF...), utilise les payloads en ligne de commande ci-dessous. Ça doit
+   **réussir**.
 2. **Installe le WAF** — `sudo ./install-waf.sh` (mode `On`/blocage par défaut) depuis la racine
    du repo.
 3. **Relance le déploiement pour activer la protection sur le même site** :

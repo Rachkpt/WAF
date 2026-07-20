@@ -50,7 +50,6 @@ id -u "$APP_USER" >/dev/null 2>&1 || useradd --system --no-create-home --shell /
 log "Déploiement de l'app dans ${APP_DIR}..."
 mkdir -p "$APP_DIR/files"
 cp "$SRC_DIR/app.py" "$SRC_DIR/requirements.txt" "$APP_DIR/"
-cp -r "$SRC_DIR/templates" "$APP_DIR/"
 
 log "Création/mise à jour de l'environnement virtuel..."
 [[ -d "$APP_DIR/.venv" ]] || python3 -m venv "$APP_DIR/.venv"
