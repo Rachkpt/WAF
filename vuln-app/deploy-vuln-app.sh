@@ -37,9 +37,34 @@ done
 log() { echo -e "\e[1;34m[vuln-app]\e[0m $*"; }
 die() { echo -e "\e[1;31m[erreur]\e[0m $*" >&2; exit 1; }
 
+detect_os() {
+  [[ -f /etc/os-release ]] || die "Impossible de détecter le système (/etc/os-release manquant)."
+  . /etc/os-release
+  OS_PRETTY="${PRETTY_NAME:-${ID:-inconnu} ${VERSION_ID:-}}"
+  case " ${ID:-} ${ID_LIKE:-} " in
+    *" debian "*|*" ubuntu "*) : ;;
+    *) die "Système non supporté : $OS_PRETTY. Ce script cible Debian/Ubuntu (apt-get)." ;;
+  esac
+  log "Système détecté : $OS_PRETTY"
+}
+detect_os
+
 log "Installation des dépendances Python..."
 export DEBIAN_FRONTEND=noninteractive
-apt-get install -y -qq python3 python3-venv python3-pip libxml2-dev libxslt1-dev iputils-ping curl
+apt-get update -qq
+
+# Indispensables.
+apt-get install -y -qq python3 python3-venv python3-pip curl iputils-ping \
+  || die "Échec d'installation des dépendances requises sur $OS_PRETTY."
+
+# Best-effort : utiles pour compiler lxml depuis les sources si aucune roue
+# précompilée n'est disponible pour cette architecture/version Python, mais
+# pas indispensables sinon. Un par un pour ne jamais bloquer sur un seul nom
+# de paquet absent d'une version Debian/Ubuntu donnée.
+for pkg in libxml2-dev libxslt1-dev; do
+  apt-get install -y -qq "$pkg" 2>/dev/null \
+    || log "⚠️  $pkg indisponible sur $OS_PRETTY, ignoré (nécessaire seulement en compilation source)."
+done
 
 id -u "$APP_USER" >/dev/null 2>&1 || useradd --system --no-create-home --shell /usr/sbin/nologin "$APP_USER"
 

@@ -73,9 +73,20 @@ done
 mkdir -p /etc/modsecurity
 exec > >(tee -a "$LOG_FILE") 2>&1
 
-if ! grep -qi ubuntu /etc/os-release 2>/dev/null; then
-  log "⚠️  Système non-Ubuntu détecté, le script n'est testé que sur Ubuntu Server 24.04."
-fi
+# ---------------------------------------------------------------------------
+# Détection OS — ce script cible Debian/Ubuntu (apt). Sur autre chose, on
+# s'arrête avec un message clair plutôt que d'échouer au milieu d'un apt-get.
+# ---------------------------------------------------------------------------
+detect_os() {
+  [[ -f /etc/os-release ]] || die "Impossible de détecter le système (/etc/os-release manquant)."
+  . /etc/os-release
+  OS_PRETTY="${PRETTY_NAME:-${ID:-inconnu} ${VERSION_ID:-}}"
+  case " ${ID:-} ${ID_LIKE:-} " in
+    *" debian "*|*" ubuntu "*) : ;;
+    *) die "Système non supporté : $OS_PRETTY. Ce script cible Debian/Ubuntu (apt-get)." ;;
+  esac
+  log "Système détecté : $OS_PRETTY"
+}
 
 # ---------------------------------------------------------------------------
 # Aide générique : clone si absent, sinon fetch + checkout de la ref demandée.
@@ -110,6 +121,7 @@ get_latest_crs_tag() {
 # Étape 1 — Dépendances système
 # ---------------------------------------------------------------------------
 install_dependencies() {
+  detect_os
   log "Installation des dépendances système..."
   export DEBIAN_FRONTEND=noninteractive
   export NEEDRESTART_MODE=a   # évite le dialogue interactif needrestart sur Ubuntu Server
@@ -117,12 +129,29 @@ install_dependencies() {
   apt-get upgrade -y -qq
   add-apt-repository -y universe >/dev/null 2>&1 || true
   apt-get update -qq
+
+  # Indispensables : le script s'arrête si l'une d'elles ne s'installe pas.
+  # apt-get install échoue EN BLOC si un seul paquet de la liste est introuvable
+  # (dans ce cas, mieux vaut un échec net ici qu'une erreur cryptique plus tard).
   apt-get install -y -qq \
-    nginx git build-essential libpcre3 libpcre3-dev libpcre2-dev \
+    nginx git build-essential libpcre2-dev \
     libssl-dev libtool autoconf automake \
     libxml2 libxml2-dev libcurl4-openssl-dev \
-    pkg-config libgeoip-dev libyajl-dev \
-    libmaxminddb-dev wget curl
+    pkg-config libyajl-dev libmaxminddb-dev wget curl \
+    || die "Échec d'installation des dépendances requises sur $OS_PRETTY."
+
+  # Best-effort : facultatives ou dont le nom/la dispo varie selon la version
+  # d'Ubuntu/Debian (libgeoip-dev nécessite "universe" et est déprécié en amont,
+  # libpcre3* est un reliquat PCRE1 que ModSecurity n'exige plus). Installées
+  # une par une pour qu'un seul paquet manquant ne bloque jamais le reste.
+  for pkg in libgeoip-dev libpcre3 libpcre3-dev; do
+    if apt-get install -y -qq "$pkg" 2>/dev/null; then
+      ok "$pkg installé"
+    else
+      log "⚠️  $pkg indisponible sur $OS_PRETTY, ignoré (fonctionnalité optionnelle)."
+    fi
+  done
+
   ok "Dépendances installées"
 }
 

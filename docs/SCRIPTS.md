@@ -23,6 +23,14 @@ site Nginx, démarrage + auto-test.
 - réapplique la config (mode blocage/détection, niveau de paranoia, site Nginx) selon les options
   passées, même si rien n'a changé côté sources.
 
+**Détection OS.** Le script lit `/etc/os-release` et s'arrête proprement (message clair) si le
+système n'est ni Debian ni Ubuntu — plutôt que d'échouer en plein milieu d'un `apt-get` sur un
+système non supporté. Les paquets dont la disponibilité varie selon la version (`libgeoip-dev`,
+reliquat PCRE1) sont installés un par un en best-effort : leur absence est juste signalée, elle
+ne bloque jamais l'installation des dépendances vraiment requises. Objectif : rester utilisable
+sur plusieurs versions d'Ubuntu/Debian dans la durée, sans réécrire le script à chaque nouvelle
+release qui renomme ou retire un paquet secondaire.
+
 ### Options
 
 | Option | Effet | Défaut |
