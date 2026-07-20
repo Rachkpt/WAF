@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="assets/logo.png" alt="Logo WAF" width="220">
+</p>
+
 # 🛡️ WAF — Nginx + ModSecurity v3 + OWASP CRS
 
 > Laboratoire complet pour déployer un WAF (Nginx + ModSecurity v3 + OWASP CRS) sur une VM
