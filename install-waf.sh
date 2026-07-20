@@ -366,6 +366,15 @@ main() {
   write_nginx_site
   reload_nginx
   [[ "$SKIP_SITE" == "1" ]] || self_test
+
+  # Rappel : si vuln-app a été déployée AVANT le WAF, son site Nginx existe déjà
+  # mais sans "modsecurity on;" (généré à ce moment-là). Il ne se met pas à jour
+  # tout seul : il faut relancer deploy-vuln-app.sh pour qu'il rebranche la
+  # protection maintenant que main.conf existe.
+  if [[ -f /etc/nginx/sites-available/vuln-app ]] && ! grep -q "modsecurity on" /etc/nginx/sites-available/vuln-app; then
+    log "ℹ️  Vuln-App détectée sans protection WAF — relance 'sudo vuln-app/deploy-vuln-app.sh' pour l'activer dessus."
+  fi
+
   log "Terminé. Log complet : $LOG_FILE"
 }
 
