@@ -1,8 +1,10 @@
 # 🎯 Vuln-App — cible de test pour valider le WAF
 
 > ⚠️ **Application volontairement vulnérable.** Aucune sanitisation nulle part, exprès.
-> Usage strictement local/lab, sur ta propre VM, jamais exposée sur Internet.
-> N'écoute que sur `127.0.0.1:5000` ; seul Nginx (avec ModSecurity devant) y a accès.
+> Usage strictement local / réseau privé (VM, lab). **Ne jamais exposer le port sur Internet**,
+> même avec le WAF actif : c'est une cible d'entraînement, pas un produit durci.
+> L'app Flask elle-même n'écoute que sur `127.0.0.1:5000` ; c'est Nginx qui l'expose sur le
+> réseau, avec ou sans ModSecurity devant selon si le WAF est installé.
 
 ## Pourquoi
 
@@ -12,36 +14,36 @@ c'est bien **ModSecurity qui bloque (403)**, pas l'application qui se défend el
 
 ## Déploiement — marche dans les deux ordres
 
-`deploy-vuln-app.sh` déploie toujours l'app (service systemd, écoute `127.0.0.1:5000`). Il détecte
-tout seul si le WAF est déjà là :
+`deploy-vuln-app.sh` déploie toujours l'app (service systemd, isolé sur `127.0.0.1:5000`) **et**
+un site Nginx accessible via l'IP de la VM sur le port choisi. Il détecte tout seul si le WAF est
+déjà là :
 
 ```bash
 cd vuln-app
 sudo ./deploy-vuln-app.sh --port 8081
 ```
 
-- **Pas de WAF installé** → l'app tourne sur `127.0.0.1:5000`, aucune config Nginx créée. Teste
-  directement en local, hors WAF, pour prouver qu'elle est vraiment exploitable.
-- **`install-waf.sh` déjà exécuté** (`/etc/modsecurity/main.conf` présent) → un site Nginx dédié
-  est en plus créé sur le port choisi, protégé par le **même** `main.conf` ModSecurity que le
-  reste du repo.
+- **Pas de WAF installé** → le site Nginx est un simple reverse-proxy (pas de ModSecurity) :
+  accessible tout de suite dans un navigateur à `http://IP_VM:8081/`, pour prouver que l'app est
+  vraiment exploitable.
+- **`install-waf.sh` déjà exécuté** (`/etc/modsecurity/main.conf` présent) → le même site est
+  protégé par ModSecurity (`main.conf`, les mêmes règles que le reste du repo).
+
+Le script affiche l'URL exacte à la fin (IP de la VM détectée automatiquement).
 
 ## Méthodologie de test (le principe demandé) : vulnérable d'abord, WAF ensuite
 
 1. **Déploie et prouve que l'app est vraiment vulnérable, sans WAF** :
    ```bash
    cd vuln-app && sudo ./deploy-vuln-app.sh
-   curl -s "http://127.0.0.1:5000/search?q=<script>alert(1)</script>"
    ```
-   (payloads complets ci-dessous, à pointer sur `127.0.0.1:5000` à cette étape). Ils doivent
-   **réussir**.
+   Ouvre `http://IP_VM:8081/` dans un navigateur, ou teste en ligne de commande (payloads
+   complets ci-dessous). Ils doivent **réussir**.
 2. **Installe le WAF** — `sudo ./install-waf.sh` (mode `On`/blocage par défaut) depuis la racine
    du repo.
-3. **Relance le déploiement pour brancher le site protégé** — `sudo ./deploy-vuln-app.sh --port
-   8081`, il détecte le WAF cette fois et crée le site Nginx.
-4. **Relance les mêmes payloads, cette fois contre le port Nginx** (`8081` par défaut, remplace
-   `127.0.0.1:5000` par `VM_IP:8081` dans les commandes ci-dessous). Ils doivent maintenant
-   renvoyer **403**.
+3. **Relance le déploiement pour activer la protection sur le même site** :
+   `sudo ./deploy-vuln-app.sh --port 8081` — il détecte le WAF cette fois et ajoute ModSecurity.
+4. **Relance les mêmes payloads contre la même URL**. Ils doivent maintenant renvoyer **403**.
 
 Si étape 1 échoue → l'app n'est pas vulnérable, le test ne prouve rien.
 Si étape 4 échoue → le WAF ne bloque pas, c'est un vrai problème de config à corriger.

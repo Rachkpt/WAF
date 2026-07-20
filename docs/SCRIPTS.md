@@ -79,11 +79,12 @@ sudo ./deploy-vuln-app.sh --port 8081
 ```
 
 Fonctionne dans les deux ordres. Installe toujours Vuln-App comme service systemd
-(`vuln-app.service`, isolé sur `127.0.0.1:5000`). Si `install-waf.sh` a déjà tourné
-(`/etc/modsecurity/main.conf` présent), ajoute en plus un site Nginx dédié sur le port choisi,
-protégé par ce même `main.conf`. Sinon, l'app reste accessible en direct sur `127.0.0.1:5000`
-pour prouver qu'elle est vulnérable avant d'installer le WAF — relance le script après
-`install-waf.sh` pour brancher le site protégé.
+(`vuln-app.service`, isolé sur `127.0.0.1:5000`), **et** un site Nginx accessible via l'IP de la
+VM sur le port choisi — Flask lui-même n'est jamais exposé directement. Si `install-waf.sh` a
+déjà tourné (`/etc/modsecurity/main.conf` présent), ce site est protégé par ModSecurity ; sinon
+c'est un simple reverse-proxy, pour pouvoir tester dans un navigateur avant même d'installer le
+WAF. Relance le script après `install-waf.sh` pour activer la protection sur le même site.
+Vérifie réellement que le port répond avant de rendre la main (sinon affiche les logs et échoue).
 
 | Option | Effet | Défaut |
 |--------|-------|--------|

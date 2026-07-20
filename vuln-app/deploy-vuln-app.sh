@@ -1,14 +1,18 @@
 #!/usr/bin/env bash
 #
-# deploy-vuln-app.sh — déploie Vuln-App (service systemd sur 127.0.0.1:5000).
+# deploy-vuln-app.sh — déploie Vuln-App (service systemd, isolé sur 127.0.0.1:5000)
+# derrière un site Nginx accessible via l'IP de la VM sur le port choisi.
 # Marche dans les deux ordres :
-#   - Sans WAF installé : app accessible en direct sur 127.0.0.1:5000 pour
-#     prouver qu'elle est vraiment vulnérable, pas de config Nginx créée.
-#   - Après install-waf.sh (main.conf présent) : ajoute aussi un site Nginx
-#     protégé par ModSecurity sur le port choisi, et bascule automatiquement
-#     dessus si tu relances ce script plus tard.
+#   - Sans WAF installé : simple reverse-proxy Nginx (pas de ModSecurity) —
+#     pratique pour prouver que l'app est vraiment vulnérable, dans un vrai
+#     navigateur, avant d'ajouter la protection.
+#   - Après install-waf.sh (main.conf présent) : le même site est protégé par
+#     ModSecurity. Relance ce script après avoir installé le WAF pour basculer
+#     automatiquement dessus.
 #
-# ⚠️ Laboratoire local uniquement. Ne jamais exposer ce port sur Internet.
+# ⚠️ Laboratoire local/réseau privé uniquement. Ne jamais exposer ce port sur
+# Internet, même avec le WAF actif : c'est une cible d'entraînement, pas un
+# produit durci.
 #
 # Usage : sudo ./deploy-vuln-app.sh [--port N]
 #   --port N   port Nginx sur lequel Vuln-App est exposée (défaut: 8081)
@@ -23,7 +27,7 @@ APP_USER="vulnapp"
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --port) PORT="$2"; shift 2 ;;
-    -h|--help) sed -n '2,13p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    -h|--help) sed -n '2,18p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
     *) echo "Option inconnue : $1" >&2; exit 1 ;;
   esac
 done
@@ -94,16 +98,27 @@ if [[ "$up" != "1" ]]; then
 fi
 log "Service vuln-app opérationnel (127.0.0.1:5000)."
 
-if command -v nginx >/dev/null 2>&1 && [[ -f /etc/modsecurity/main.conf ]]; then
-  log "WAF détecté — configuration du site Nginx (port ${PORT}, protégé par main.conf)..."
-  cat > /etc/nginx/sites-available/vuln-app <<EOF
+# Nginx sert TOUJOURS de façade réseau, avec ou sans WAF devant : Flask lui-même
+# ne doit jamais être exposé directement (bonne pratique, même pour une app
+# volontairement vulnérable). Le bloc modsecurity n'est ajouté que si le WAF
+# est installé ; sinon le site reste un simple reverse-proxy, pour pouvoir
+# tester dans un navigateur dès maintenant.
+command -v nginx >/dev/null 2>&1 || { log "Installation de Nginx..."; apt-get install -y -qq nginx; }
+
+WAF_ACTIVE=0
+MODSEC_SNIPPET=""
+if [[ -f /etc/modsecurity/main.conf ]]; then
+  WAF_ACTIVE=1
+  MODSEC_SNIPPET=$'    modsecurity on;\n    modsecurity_rules_file /etc/modsecurity/main.conf;\n'
+fi
+
+log "Configuration du site Nginx (port ${PORT})..."
+cat > /etc/nginx/sites-available/vuln-app <<EOF
 server {
     listen ${PORT};
     server_name _;
 
-    modsecurity on;
-    modsecurity_rules_file /etc/modsecurity/main.conf;
-
+${MODSEC_SNIPPET}
     location / {
         proxy_pass http://127.0.0.1:5000;
         proxy_set_header Host \$host;
@@ -112,15 +127,33 @@ server {
     }
 }
 EOF
-  ln -sf /etc/nginx/sites-available/vuln-app /etc/nginx/sites-enabled/vuln-app
-  nginx -t
-  systemctl restart nginx
-  log "Terminé. Vuln-App est en écoute sur http://<IP_VM>:${PORT}/ (à travers le WAF)."
-  log "Voir vuln-app/README.md pour la liste des payloads de test."
-else
-  log "Pas de WAF installé pour l'instant — aucune config Nginx créée."
-  log "Teste directement en local, hors WAF, pour prouver que l'app est vulnérable :"
-  log "  curl \"http://127.0.0.1:5000/search?q=<script>alert(1)</script>\""
-  log "Une fois convaincu, lance 'sudo ../install-waf.sh' puis relance ce script :"
-  log "il détectera le WAF et ajoutera automatiquement le site Nginx protégé sur le port ${PORT}."
+ln -sf /etc/nginx/sites-available/vuln-app /etc/nginx/sites-enabled/vuln-app
+nginx -t
+systemctl restart nginx
+systemctl enable --quiet nginx
+
+log "Vérification que le site répond bien sur le port ${PORT}..."
+up=0
+for _ in $(seq 1 15); do
+  if curl -s -o /dev/null "http://127.0.0.1:${PORT}/"; then
+    up=1
+    break
+  fi
+  sleep 1
+done
+if [[ "$up" != "1" ]]; then
+  echo "--- nginx -T (config effective) ---" >&2
+  nginx -T 2>&1 | tail -n 60 >&2 || true
+  die "Nginx ne répond pas sur le port ${PORT} (voir ci-dessus)."
 fi
+
+VM_IP="$(hostname -I 2>/dev/null | awk '{print $1}')"
+[[ -n "$VM_IP" ]] || VM_IP="<IP_VM>"
+
+if [[ "$WAF_ACTIVE" == "1" ]]; then
+  log "Terminé. Vuln-App est protégée par le WAF : http://${VM_IP}:${PORT}/"
+else
+  log "Terminé. Vuln-App accessible SANS WAF pour l'instant : http://${VM_IP}:${PORT}/"
+  log "Installe le WAF ('sudo ../install-waf.sh') puis relance ce script pour activer la protection."
+fi
+log "Voir vuln-app/README.md pour la liste des payloads de test."
