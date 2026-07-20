@@ -104,3 +104,7 @@ Méthodologie complète et payloads par type de faille : [`vuln-app/README.md`](
 - [OWASP Core Rule Set](https://github.com/coreruleset/coreruleset)
 - [ModSecurity-nginx connector](https://github.com/SpiderLabs/ModSecurity-nginx)
 - [OWASP Top 10](https://owasp.org/www-project-top-ten/)
+
+## 📄 Licence
+
+[MIT](LICENSE) — voir la note d'usage lab/éducatif à la fin du fichier.
