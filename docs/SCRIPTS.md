@@ -44,8 +44,12 @@ release qui renomme ou retire un paquet secondaire.
 | `--crs-version TAG\|latest` | Version d'OWASP CRS | `latest` |
 | `--modsec-branch BRANCH` | Branche ModSecurity à suivre | `v3/master` |
 | `--install-dir PATH` | Dossier des sources compilées | `/opt` |
+| `--allow-ip IP[/CIDR]` | IP de confiance **non filtrée** par le WAF (répétable). Ex. ton poste d'admin | aucune |
+| `--upgrade-system` | Fait aussi `apt-get upgrade` (met à jour tout le système) | non |
 | `--skip-site` | Ne touche pas à la config Nginx du site | — |
 | `--force-rebuild` | Recompile même si rien n'a changé | — |
+
+**Codes de sortie :** `0` = tout est OK ; `1` = erreur. En cas d'erreur, la configuration du site est restaurée à son état précédent.
 
 Toutes les options sont aussi lisibles avec `sudo ./install-waf.sh --help`.
 
@@ -66,13 +70,38 @@ sudo ./install-waf.sh --skip-site
 
 # Forcer une recompilation complète même sans changement détecté
 sudo ./install-waf.sh --force-rebuild
+
+# Garder ton poste d'admin hors du WAF (à réserver à une IP fiable)
+sudo ./install-waf.sh --allow-ip 203.0.113.5
 ```
+
+## Sur un serveur qui sert déjà du web
+
+Le script est prévu pour tourner sur une machine déjà en service. Ce qu'il fait exactement :
+
+- **Avant toute modification**, il vérifie que le port (80 par défaut) est libre. Si Apache ou un
+  autre service l'occupe, il s'arrête avec un message et ne touche à rien.
+- **Il refuse** de remplacer un autre site Nginx qui écoute déjà sur le même port.
+- **Le site par défaut** d'Ubuntu n'est pas supprimé : seul son lien `sites-enabled/default` est
+  retiré (réactivable avec `ln -s /etc/nginx/sites-available/default /etc/nginx/sites-enabled/`).
+- **Les autres sites Nginx** ne sont pas modifiés.
+- **Il ne fait pas de `apt upgrade`** par défaut : seuls Nginx et les dépendances de compilation
+  sont installés. Option `--upgrade-system` si tu veux tout mettre à jour.
+- **Redémarrage de Nginx** : c'est le seul moment où les autres sites Nginx sont brièvement
+  coupés (quelques secondes). Prévois-le.
+- **Si la config est refusée**, le site est restauré à son état précédent et Nginx n'est pas redémarré.
+
+> ⚠️ Vérifie avant : `sudo ss -ltnp` (quels services écoutent) et `ls /etc/nginx/sites-enabled/`.
 
 ### Personnalisation permanente des règles
 
 - `/etc/modsecurity/crs-custom.conf` — géré par le script (niveau de paranoia via `--paranoia`),
   **régénéré à chaque run**, ne pas éditer à la main.
-- `/etc/modsecurity/local-custom.conf` — **jamais touché** par le script : c'est ici que vont tes
+- `/etc/modsecurity/allowlist.conf` — généré par `--allow-ip` (IPs de confiance, chargé avant les règles).
+- `/etc/modsecurity/local-before.conf` — **jamais touché** : exclusions à appliquer **avant** les règles OWASP.
+- `/etc/modsecurity/local-after.conf` — **jamais touché** : `SecRuleRemoveById` à appliquer **après** les règles.
+- Ancien `local-custom.conf` : repris automatiquement dans `local-after.conf` (il était déjà chargé après).
+- `local-custom.conf` (ancien emplacement) — **jamais touché** par le script : c'est ici que vont tes
   règles ou exclusions personnelles permanentes.
 
 Log complet de chaque run : `/var/log/waf-install.log`.

@@ -137,8 +137,31 @@ if [[ -f /etc/modsecurity/main.conf ]]; then
   MODSEC_SNIPPET=$'    modsecurity on;\n    modsecurity_rules_file /etc/modsecurity/main.conf;\n'
 fi
 
+# Le port doit être libre, ou occupé par ce même site. Jamais écraser un autre service.
+if command -v ss >/dev/null 2>&1; then
+  listeners=$(ss -ltnpH "sport = :${PORT}" 2>/dev/null || true)
+  if [[ -n "$listeners" ]] && ! grep -q 'nginx' <<< "$listeners"; then
+    die "Le port ${PORT} est déjà utilisé par un autre service :
+$listeners
+Choisis un autre port avec --port."
+  fi
+fi
+for f in /etc/nginx/sites-enabled/*; do
+  [[ -e "$f" ]] || continue
+  [[ "$(basename "$f")" == "vuln-app" ]] && continue
+  if grep -qE "^[[:space:]]*listen[[:space:]]+(\[::\]:)?${PORT}([[:space:];]|\$)" "$f"; then
+    die "Le site Nginx '$f' écoute déjà sur le port ${PORT}. Utilise --port différent."
+  fi
+done
+
 log "Configuration du site Nginx (port ${PORT})..."
-cat > /etc/nginx/sites-available/vuln-app <<EOF
+SITE_FILE=/etc/nginx/sites-available/vuln-app
+SITE_BACKUP=""
+if [[ -f "$SITE_FILE" ]]; then
+  SITE_BACKUP="$(mktemp)"
+  cp -a "$SITE_FILE" "$SITE_BACKUP"
+fi
+cat > "$SITE_FILE" <<EOF
 server {
     listen ${PORT};
     server_name _;
@@ -153,7 +176,11 @@ ${MODSEC_SNIPPET}
 }
 EOF
 ln -sf /etc/nginx/sites-available/vuln-app /etc/nginx/sites-enabled/vuln-app
-nginx -t
+if ! nginx -t; then
+  # Retour arrière : on ne laisse jamais une config Nginx cassée derrière
+  if [[ -n "$SITE_BACKUP" ]]; then cp -a "$SITE_BACKUP" "$SITE_FILE"; else rm -f "$SITE_FILE" /etc/nginx/sites-enabled/vuln-app; fi
+  die "Configuration Nginx refusée. Ancien site restauré."
+fi
 systemctl restart nginx
 systemctl enable --quiet nginx
 

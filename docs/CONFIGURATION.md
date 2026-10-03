@@ -191,9 +191,10 @@ Include /etc/modsecurity/coreruleset/rules/*.conf
 EOF'
 ```
 
-> ℹ️ `install-waf.sh` va plus loin : il insère aussi `crs-custom.conf` (niveau de paranoia,
-> régénéré à chaque run) et `local-custom.conf` (jamais écrasé, pour tes règles perso) entre
-> `crs-setup.conf` et `rules/*.conf`. Voir [SCRIPTS.md](SCRIPTS.md).
+> ℹ️ `install-waf.sh` va plus loin, et l'ordre compte : `allowlist.conf` (IPs de confiance),
+> `crs-custom.conf` (niveau de paranoia, régénéré à chaque run) et `local-before.conf` (exclusions)
+> sont chargés **avant** `rules/*.conf` ; `local-after.conf` (`SecRuleRemoveById`) est chargé
+> **après**. Voir [SCRIPTS.md](SCRIPTS.md).
 
 ---
 
@@ -335,7 +336,9 @@ sudo grep "Access denied" /var/log/modsec_audit.log | wc -l
 ├── unicode.mapping                     # Mapping unicode
 ├── main.conf                           # Fichier principal qui inclut tout
 ├── crs-custom.conf                     # Niveau de paranoia (géré par install-waf.sh)
-├── local-custom.conf                   # Règles perso (jamais touché par le script)
+├── allowlist.conf                      # IPs de confiance (option --allow-ip)
+├── local-before.conf                   # Exclusions AVANT les règles (jamais touché)
+├── local-after.conf                    # SecRuleRemoveById APRÈS les règles (jamais touché)
 └── coreruleset/
     ├── crs-setup.conf                  # Config des règles OWASP
     └── rules/                          # 843 règles OWASP CRS v4
