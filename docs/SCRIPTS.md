@@ -76,6 +76,18 @@ sudo ./install-waf.sh --force-rebuild
 sudo ./install-waf.sh --allow-ip 203.0.113.5
 ```
 
+## Le plus simple : l'assistant
+
+Tape juste `sudo ./install-waf.sh` (sans option). Il te pose des questions :
+
+1. **Ce serveur sert-il déjà un site web ?** Si oui, il liste les sites et leur port, tu choisis celui à protéger.
+2. **Sinon**, sur quel port veux-tu le WAF ? Si le port est pris, il propose un port libre.
+3. **Mode** : détection (recommandé pour commencer) ou blocage.
+4. **Ton IP** : à ajouter à la liste de confiance ?
+
+Rien n'est modifié avant le récapitulatif final et ta confirmation. Les options en ligne de commande
+ci-dessous restent disponibles pour ceux qui les connaissent.
+
 ## Port déjà occupé ? Deux solutions
 
 Le WAF n'est lié à aucun port précis. Le port ne sert qu'à savoir où Nginx écoute.

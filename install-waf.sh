@@ -63,6 +63,10 @@ trap 'die "échec à la ligne $LINENO (voir $LOG_FILE)"' ERR
 # ---------------------------------------------------------------------------
 # Parsing des options
 # ---------------------------------------------------------------------------
+# Sans aucune option et dans un terminal : on lance l'assistant
+INTERACTIVE=0
+if [[ $# -eq 0 && -t 0 ]]; then INTERACTIVE=1; fi
+
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --domain|--server-name) SERVER_NAME="${2:-}"; shift 2 ;;
@@ -607,8 +611,133 @@ self_test() {
 }
 
 # ---------------------------------------------------------------------------
+# ---------------------------------------------------------------------------
+# Assistant interactif : lancé quand on tape juste « sudo ./install-waf.sh »
+# ---------------------------------------------------------------------------
+yes_no() {
+  local question="$1" default="${2:-o}" answer
+  while true; do
+    read -r -p "  $question [o/n, défaut: $default] : " answer || die "Entrée interrompue."
+    answer="${answer:-$default}"
+    case "${answer,,}" in
+      o|oui|y|yes) return 0 ;;
+      n|non|no)    return 1 ;;
+      *) echo "    → Réponds par o (oui) ou n (non)." ;;
+    esac
+  done
+}
+
+ask_text() {  # ask_text "Question" "défaut" -> ANSWER
+  local answer
+  read -r -p "  $1 [$2] : " answer || die "Entrée interrompue."
+  ANSWER="${answer:-$2}"
+}
+
+# Liste les sites Nginx actifs : « nom|port » (un par ligne)
+list_nginx_sites() {
+  local f name port
+  for f in /etc/nginx/sites-enabled/*; do
+    [[ -e "$f" ]] || continue
+    name=$(basename "$f")
+    port=$(grep -oE '^[[:space:]]*listen[[:space:]]+[0-9]+' "$f" | head -1 | grep -oE '[0-9]+' || true)
+    echo "${name}|${port:-?}"
+  done
+}
+
+ask_new_site_port() {
+  local port
+  while true; do
+    ask_text "Sur quel port veux-tu le WAF ?" "80"
+    port="$ANSWER"
+    if ! [[ "$port" =~ ^[0-9]+$ ]] || (( port < 1 || port > 65535 )); then
+      echo "    → Port invalide."; continue
+    fi
+    LISTEN_PORT="$port"
+    if port_in_use "$port" && ! ss -ltnpH "sport = :$port" 2>/dev/null | grep -q nginx; then
+      echo "    → Le port $port est déjà utilisé par un autre service."
+      echo "      Port libre suggéré : $(suggest_free_port)"
+      continue
+    fi
+    if port_used_by_nginx_site "$port"; then
+      echo "    → Un autre site Nginx utilise déjà le port $port."
+      echo "      Port libre suggéré : $(suggest_free_port)"
+      continue
+    fi
+    return 0
+  done
+}
+
+interactive_wizard() {
+  echo ""
+  echo -e "\e[1mAssistant d'installation du WAF\e[0m"
+  echo "  Je vais te poser quelques questions. Rien n'est modifié avant ta confirmation finale."
+  echo ""
+
+  local sites line i choice name port
+  mapfile -t sites < <(list_nginx_sites)
+
+  if (( ${#sites[@]} > 0 )) && yes_no "Ce serveur sert-il déjà un site web (Nginx) ?" "o"; then
+    echo "  Sites trouvés :"
+    i=1
+    for line in "${sites[@]}"; do
+      echo "    $i) ${line%%|*}   (port ${line##*|})"
+      i=$((i + 1))
+    done
+    while true; do
+      ask_text "Quel site veux-tu protéger ? (numéro)" "1"
+      choice="$ANSWER"
+      if [[ "$choice" =~ ^[0-9]+$ ]] && (( choice >= 1 && choice <= ${#sites[@]} )); then
+        line="${sites[$((choice - 1))]}"
+        name="${line%%|*}"; port="${line##*|}"
+        break
+      fi
+      echo "    → Choisis un numéro entre 1 et ${#sites[@]}."
+    done
+    if [[ "$port" == "?" ]]; then
+      die "Impossible de lire le port du site '$name'. Lance avec : sudo ./install-waf.sh --attach-to $name"
+    fi
+    echo "  → Site choisi : $name (port $port). Il va être protégé, son port ne change pas."
+    ATTACH_SITE="$name"
+  else
+    echo "  → Nouveau site WAF."
+    ask_new_site_port
+  fi
+
+  echo ""
+  echo "  Mode du WAF :"
+  echo "    1) Détection : il observe et journalise, mais ne bloque rien (recommandé pour commencer)"
+  echo "    2) Blocage   : il bloque les attaques (403)"
+  while true; do
+    ask_text "Ton choix" "1"
+    case "$ANSWER" in
+      1) MODSEC_MODE="DetectionOnly"; break ;;
+      2) MODSEC_MODE="On"; break ;;
+      *) echo "    → Tape 1 ou 2." ;;
+    esac
+  done
+
+  local my_ip="${SSH_CLIENT:-}"
+  my_ip="${my_ip%% *}"
+  if [[ -n "$my_ip" ]] && yes_no "Ajouter ton IP ($my_ip) à la liste de confiance (jamais filtrée) ?" "o"; then
+    ALLOW_IPS+=("$my_ip")
+  fi
+
+  echo ""
+  echo -e "\e[1mRécapitulatif :\e[0m"
+  if [[ -n "$ATTACH_SITE" ]]; then
+    echo "    Site protégé  : $ATTACH_SITE (port $port)"
+  else
+    echo "    Nouveau site  : port $LISTEN_PORT"
+  fi
+  echo "    Mode          : $([[ "$MODSEC_MODE" == "On" ]] && echo blocage || echo détection)"
+  echo "    Confiance     : ${ALLOW_IPS[*]:-aucune}"
+  echo ""
+  yes_no "Lancer l'installation maintenant ?" "o" || { echo "Annulé. Rien n'a été modifié."; exit 0; }
+}
+
 main() {
   log "Démarrage — WAF Nginx + ModSecurity v3 + OWASP CRS"
+  if (( INTERACTIVE )); then interactive_wizard; fi
   validate_args
   preflight
   install_dependencies
