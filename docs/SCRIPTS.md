@@ -44,6 +44,7 @@ release qui renomme ou retire un paquet secondaire.
 | `--crs-version TAG\|latest` | Version d'OWASP CRS | `latest` |
 | `--modsec-branch BRANCH` | Branche ModSecurity à suivre | `v3/master` |
 | `--install-dir PATH` | Dossier des sources compilées | `/opt` |
+| `--attach-to SITE` | Protège un site Nginx **déjà en place** (son port ne change pas). Ex. `--attach-to default` | — |
 | `--allow-ip IP[/CIDR]` | IP de confiance **non filtrée** par le WAF (répétable). Ex. ton poste d'admin | aucune |
 | `--upgrade-system` | Fait aussi `apt-get upgrade` (met à jour tout le système) | non |
 | `--skip-site` | Ne touche pas à la config Nginx du site | — |
@@ -74,6 +75,24 @@ sudo ./install-waf.sh --force-rebuild
 # Garder ton poste d'admin hors du WAF (à réserver à une IP fiable)
 sudo ./install-waf.sh --allow-ip 203.0.113.5
 ```
+
+## Port déjà occupé ? Deux solutions
+
+Le WAF n'est lié à aucun port précis. Le port ne sert qu'à savoir où Nginx écoute.
+
+| Situation | Commande |
+|---|---|
+| Le port est libre, mais tu veux un WAF sur un autre port | `sudo ./install-waf.sh --port 8080` |
+| Un site tourne déjà sur le port et tu veux le protéger | `sudo ./install-waf.sh --attach-to NOM_DU_SITE` |
+
+Si le port est pris, le script **propose lui-même un port libre** dans son message d'erreur.
+
+**Différence importante :** sans `--attach-to`, le script crée un **nouveau** site : un site existant
+sur le port 80 n'est pas protégé. Avec `--attach-to`, le site existant reçoit la protection
+(`modsecurity on;` ajouté dans chacun de ses blocs `server`), sans changer son port.
+
+**Pare-feu :** si UFW est actif, le port du WAF (et celui de Vuln-App) est ouvert automatiquement.
+Sinon, ouvre-le toi-même : `sudo ufw allow PORT/tcp`.
 
 ## Sur un serveur qui sert déjà du web
 

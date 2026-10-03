@@ -14,6 +14,7 @@
 #   --crs-version TAG|latest version d'OWASP CRS à installer (défaut: latest)
 #   --modsec-branch BRANCH  branche ModSecurity à suivre (défaut: v3/master)
 #   --install-dir PATH      dossier des sources compilées (défaut: /opt)
+#   --attach-to SITE        protège un site Nginx EXISTANT (sans changer son port)
 #   --allow-ip IP[/CIDR]    IP de confiance qui ne passe pas par le WAF (répétable)
 #   --skip-site             ne touche pas à la config Nginx du site
 #   --force-rebuild         recompile même si rien n'a changé
@@ -41,6 +42,7 @@ SKIP_SITE=0
 FORCE_REBUILD=0
 UPGRADE_SYSTEM=0
 ALLOW_IPS=()
+ATTACH_SITE=""
 
 STATE_FILE=/etc/modsecurity/.waf-install-state
 LOG_FILE=/var/log/waf-install.log
@@ -73,6 +75,7 @@ while [[ $# -gt 0 ]]; do
     --modsec-branch)        MODSEC_BRANCH="${2:-}"; shift 2 ;;
     --install-dir)          INSTALL_DIR="${2:-}"; shift 2 ;;
     --allow-ip)             ALLOW_IPS+=("${2:-}"); shift 2 ;;
+    --attach-to)            ATTACH_SITE="${2:-}"; shift 2 ;;
     --skip-site)            SKIP_SITE=1; shift ;;
     --force-rebuild)        FORCE_REBUILD=1; shift ;;
     --upgrade-system)       UPGRADE_SYSTEM=1; shift ;;
@@ -110,6 +113,9 @@ validate_args() {
   [[ "$WEB_ROOT" == /* ]] || die "--web-root doit être un chemin absolu (reçu : '$WEB_ROOT')"
   [[ "$CRS_VERSION" == "latest" || "$CRS_VERSION" =~ ^[A-Za-z0-9._-]+$ ]] \
     || die "--crs-version invalide : '$CRS_VERSION'"
+  if [[ -n "$ATTACH_SITE" ]]; then
+    [[ "$ATTACH_SITE" =~ ^[A-Za-z0-9._-]+$ ]] || die "--attach-to invalide : '$ATTACH_SITE'"
+  fi
   for ip in ${ALLOW_IPS[@]+"${ALLOW_IPS[@]}"}; do
     valid_ipv4_or_cidr "$ip" || die "--allow-ip invalide : '$ip' (ex. 203.0.113.5 ou 10.0.0.0/24)"
   done
@@ -118,28 +124,62 @@ validate_args() {
 # ---------------------------------------------------------------------------
 # Vérifications AVANT modification : le port doit être libre, sans écraser un autre site
 # ---------------------------------------------------------------------------
-preflight() {
-  log "Vérifications préalables..."
+port_in_use() {
+  command -v ss >/dev/null 2>&1 || return 1
+  [[ -n "$(ss -ltnH "sport = :$1" 2>/dev/null)" ]]
+}
 
-  if command -v ss >/dev/null 2>&1; then
-    local listeners
-    listeners=$(ss -ltnpH "sport = :${LISTEN_PORT}" 2>/dev/null || true)
-    if [[ -n "$listeners" ]] && ! grep -q 'nginx' <<< "$listeners"; then
-      die "Le port $LISTEN_PORT est déjà utilisé par un autre service :
-$listeners
-Choisis un autre port avec --port, ou arrête ce service."
-    fi
-  fi
-
-  # Un autre site Nginx écoute déjà sur ce port : on refuse plutôt que de le remplacer.
+port_used_by_nginx_site() {
+  # 0 si un site Nginx (autre que $SITE_NAME) écoute déjà sur ce port
   local f
   for f in /etc/nginx/sites-enabled/*; do
     [[ -e "$f" ]] || continue
     [[ "$(basename "$f")" == "$SITE_NAME" ]] && continue
-    if grep -qE "^[[:space:]]*listen[[:space:]]+(\[::\]:)?${LISTEN_PORT}([[:space:];]|$)" "$f"; then
-      die "Le site Nginx '$f' écoute déjà sur le port $LISTEN_PORT. Utilise --port ou --site-name différent."
+    if grep -qE "^[[:space:]]*listen[[:space:]]+(\[::\]:)?$1([[:space:];]|$)" "$f"; then
+      return 0
     fi
   done
+  return 1
+}
+
+# Premier port « courant » libre, proposé dans les messages d'erreur
+suggest_free_port() {
+  local p
+  for p in 8080 8081 8082 8088 8888 9080; do
+    if ! port_in_use "$p" && ! port_used_by_nginx_site "$p"; then echo "$p"; return; fi
+  done
+  echo "8080"
+}
+
+preflight() {
+  log "Vérifications préalables..."
+
+  if [[ -n "$ATTACH_SITE" ]]; then
+    local site_file="/etc/nginx/sites-available/$ATTACH_SITE"
+    [[ -f "$site_file" ]] || die "Site Nginx introuvable : $site_file (vérifie avec : ls /etc/nginx/sites-available/)"
+    # Le port d'écoute est celui du site existant : on le lit dans sa config
+    LISTEN_PORT=$(grep -oE '^[[:space:]]*listen[[:space:]]+[0-9]+' "$site_file" | head -1 | grep -oE '[0-9]+' || true)
+    [[ -n "$LISTEN_PORT" ]] || die "Aucun 'listen <port>' trouvé dans $site_file"
+    ok "Site existant '$ATTACH_SITE' écoute sur le port $LISTEN_PORT (il sera protégé, port inchangé)"
+    return
+  fi
+
+  if port_in_use "$LISTEN_PORT"; then
+    local listeners
+    listeners=$(ss -ltnpH "sport = :${LISTEN_PORT}" 2>/dev/null || true)
+    if ! grep -q 'nginx' <<< "$listeners"; then
+      die "Le port $LISTEN_PORT est déjà utilisé par un autre service :
+$listeners
+Pour installer le WAF sur un port libre :     sudo ./install-waf.sh --port $(suggest_free_port)
+Pour protéger le site qui tourne déjà :       sudo ./install-waf.sh --attach-to NOM_DU_SITE"
+    fi
+  fi
+
+  if port_used_by_nginx_site "$LISTEN_PORT"; then
+    die "Un autre site Nginx écoute déjà sur le port $LISTEN_PORT. Pour l'utiliser sans le remplacer :
+  sudo ./install-waf.sh --port $(suggest_free_port)      (nouveau port)
+  sudo ./install-waf.sh --attach-to NOM_DU_SITE          (protéger ce site)"
+  fi
   ok "Port $LISTEN_PORT disponible"
 }
 
@@ -417,9 +457,34 @@ EOF
 # ---------------------------------------------------------------------------
 SITE_FILE=""; SITE_BACKUP=""; SITE_EXISTED=0
 
+attach_to_site() {
+  SITE_FILE="/etc/nginx/sites-available/$ATTACH_SITE"
+  mkdir -p "$BACKUP_DIR"
+  SITE_EXISTED=1
+  SITE_BACKUP="$BACKUP_DIR/$ATTACH_SITE.before"
+  cp -a "$SITE_FILE" "$SITE_BACKUP"
+
+  if grep -q "modsecurity on" "$SITE_FILE"; then
+    ok "Site '$ATTACH_SITE' déjà protégé par ModSecurity"
+    return
+  fi
+  # Ajoute la protection dans CHAQUE bloc server { } du site, juste après son ouverture
+  awk '{ print }
+       /^[[:space:]]*server[[:space:]]*\{/ {
+         print "    modsecurity on;"
+         print "    modsecurity_rules_file /etc/modsecurity/main.conf;"
+       }' "$SITE_FILE" > "$SITE_FILE.waf-tmp"
+  mv "$SITE_FILE.waf-tmp" "$SITE_FILE"
+  ok "Protection ModSecurity ajoutée au site '$ATTACH_SITE' (port $LISTEN_PORT inchangé)"
+}
+
 write_nginx_site() {
   if [[ "$SKIP_SITE" == "1" ]]; then
     log "Config du site Nginx laissée telle quelle (--skip-site)"
+    return
+  fi
+  if [[ -n "$ATTACH_SITE" ]]; then
+    attach_to_site
     return
   fi
   mkdir -p "$WEB_ROOT" "$BACKUP_DIR"
@@ -453,7 +518,7 @@ EOF
   ln -sf "$SITE_FILE" "/etc/nginx/sites-enabled/$SITE_NAME"
 
   # Le site par défaut d'Ubuntu n'est PAS supprimé : seul son lien est retiré (réversible).
-  if [[ -L /etc/nginx/sites-enabled/default ]]; then
+  if [[ -z "$ATTACH_SITE" && -L /etc/nginx/sites-enabled/default ]]; then
     rm -f /etc/nginx/sites-enabled/default
     ok "Site par défaut désactivé (sites-available/default conservé, réactivable avec ln -s)"
   elif [[ -e /etc/nginx/sites-enabled/default ]]; then
@@ -461,6 +526,16 @@ EOF
     ok "Site par défaut mis de côté dans $BACKUP_DIR"
   fi
   ok "Site Nginx '$SITE_NAME' configuré (port $LISTEN_PORT, root $WEB_ROOT)"
+}
+
+# Ouvre le port dans UFW s'il est actif (sinon le port est injoignable depuis le réseau)
+open_firewall() {
+  if command -v ufw >/dev/null 2>&1 && ufw status 2>/dev/null | grep -q "Status: active"; then
+    ufw allow "${LISTEN_PORT}/tcp" >/dev/null
+    ok "Pare-feu UFW : port ${LISTEN_PORT}/tcp ouvert"
+  else
+    log "UFW inactif ou absent : rien à ouvrir."
+  fi
 }
 
 # Restaure le site tel qu'il était avant ce run
@@ -547,6 +622,7 @@ main() {
   write_main_conf
   write_nginx_site
   reload_nginx
+  open_firewall
 
   if [[ "$SKIP_SITE" != "1" ]]; then
     if ! self_test; then

@@ -199,6 +199,12 @@ if [[ "$up" != "1" ]]; then
   die "Nginx ne répond pas sur le port ${PORT} (voir ci-dessus)."
 fi
 
+# Pare-feu : ouvre le port si UFW est actif, sinon il est injoignable depuis le réseau
+if command -v ufw >/dev/null 2>&1 && ufw status 2>/dev/null | grep -q "Status: active"; then
+  ufw allow "${PORT}/tcp" >/dev/null
+  log "Pare-feu UFW : port ${PORT}/tcp ouvert."
+fi
+
 VM_IP="$(hostname -I 2>/dev/null | awk '{print $1}')"
 [[ -n "$VM_IP" ]] || VM_IP="<IP_VM>"
 
