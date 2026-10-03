@@ -51,10 +51,19 @@ de ce repo directement sur Internet sans l'avoir durcie et auditée toi-même.
 sudo ./install-waf.sh
 ```
 
-Une seule commande : installe et configure tout (Nginx, ModSecurity v3, connecteur, OWASP CRS).
-Relançable à volonté pour mettre à jour. Personnalisable via des options
-(`--domain`, `--port`, `--paranoia`, `--detection-only`, ...). Détail complet des options et
-exemples : [`docs/SCRIPTS.md`](docs/SCRIPTS.md).
+**Sans aucune option, le script lance un assistant** : il te demande si le serveur sert déjà un
+site, sur quel port, le mode (détection ou blocage) et ton IP de confiance. Rien n'est modifié
+avant ta confirmation finale.
+
+Il installe et configure tout (Nginx, ModSecurity v3, connecteur, OWASP CRS).
+Relançable à volonté pour mettre à jour. Pour les utilisateurs avancés, les options sont
+disponibles : `--port`, `--attach-to` (protéger un site existant sur son port), `--proxy-to`
+(WAF sur un autre port, devant le site), `--allow-ip`, `--detection-only`, `--paranoia`, ...
+Détail complet et cas d'usage : [`docs/SCRIPTS.md`](docs/SCRIPTS.md).
+
+> ⚠️ **Serveur déjà en service ?** Lis d'abord la section « Sur un serveur qui sert déjà du web »
+> de [`docs/SCRIPTS.md`](docs/SCRIPTS.md). Le redémarrage de Nginx coupe brièvement les autres sites.
+> Teste sur une VM (avec un snapshot) avant la production.
 
 ### Option B — Installation manuelle (pour comprendre / débugger)
 
@@ -70,8 +79,8 @@ diagnostiquer une erreur de compilation.
 ### Ensuite — valider que le WAF bloque vraiment
 
 ```bash
-cd vuln-app && sudo ./deploy-vuln-app.sh   # cible volontairement vulnérable, derrière le WAF
-curl -s "http://VM_IP:8081/search?q=<script>alert(1)</script>"   # doit renvoyer 403
+cd vuln-app && sudo ./deploy-vuln-app.sh   # assistant : choisit le port de la cible
+curl -s "http://VM_IP:8081/search?q=<script>alert(1)</script>"   # doit renvoyer 403 (si le WAF est en blocage)
 ```
 
 Méthodologie complète et payloads par type de faille : [`vuln-app/README.md`](vuln-app/README.md).
