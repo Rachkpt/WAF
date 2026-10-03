@@ -44,6 +44,7 @@ release qui renomme ou retire un paquet secondaire.
 | `--crs-version TAG\|latest` | Version d'OWASP CRS | `latest` |
 | `--modsec-branch BRANCH` | Branche ModSecurity à suivre | `v3/master` |
 | `--install-dir PATH` | Dossier des sources compilées | `/opt` |
+| `--proxy-to URL` | WAF sur `--port`, qui transmet au site réel (ex. `http://127.0.0.1:8090`). Pour protéger un site qui tourne sur **un autre port** | — |
 | `--attach-to SITE` | Protège un site Nginx **déjà en place** (son port ne change pas). Ex. `--attach-to default` | — |
 | `--allow-ip IP[/CIDR]` | IP de confiance **non filtrée** par le WAF (répétable). Ex. ton poste d'admin | aucune |
 | `--upgrade-system` | Fait aussi `apt-get upgrade` (met à jour tout le système) | non |
@@ -88,6 +89,20 @@ Tape juste `sudo ./install-waf.sh` (sans option). Il te pose des questions :
 Rien n'est modifié avant le récapitulatif final et ta confirmation. Les options en ligne de commande
 ci-dessous restent disponibles pour ceux qui les connaissent.
 
+## Le WAF peut-il tourner sur un autre port que le site ?
+
+**Pas tout seul.** Un WAF sur le port 8080 ne protège pas un site sur le port 80 : le trafic
+passe directement par le port 80 et ne touche jamais le WAF.
+
+Il y a deux façons correctes de protéger un site :
+
+| Ce que tu veux | Option | Résultat |
+|---|---|---|
+| Protéger le site **sur son port actuel** | `--attach-to SITE` | Le site garde son port, le WAF est dedans. Rien à changer côté visiteurs. |
+| Le WAF sur **un autre port**, devant le site | `--proxy-to http://127.0.0.1:PORT_DU_SITE --port NOUVEAU` | Les visiteurs passent par le nouveau port. **Ferme l'ancien port au public** (`sudo ufw deny ANCIEN/tcp`), sinon il reste sans protection. |
+
+L'assistant pose cette question quand il trouve un site existant.
+
 ## Port déjà occupé ? Deux solutions
 
 Le WAF n'est lié à aucun port précis. Le port ne sert qu'à savoir où Nginx écoute.
@@ -113,8 +128,7 @@ Le script est prévu pour tourner sur une machine déjà en service. Ce qu'il fa
 - **Avant toute modification**, il vérifie que le port (80 par défaut) est libre. Si Apache ou un
   autre service l'occupe, il s'arrête avec un message et ne touche à rien.
 - **Il refuse** de remplacer un autre site Nginx qui écoute déjà sur le même port.
-- **Le site par défaut** d'Ubuntu n'est pas supprimé : seul son lien `sites-enabled/default` est
-  retiré (réactivable avec `ln -s /etc/nginx/sites-available/default /etc/nginx/sites-enabled/`).
+- **Le site par défaut** d'Ubuntu et les autres sites ne sont **jamais modifiés**.
 - **Les autres sites Nginx** ne sont pas modifiés.
 - **Il ne fait pas de `apt upgrade`** par défaut : seuls Nginx et les dépendances de compilation
   sont installés. Option `--upgrade-system` si tu veux tout mettre à jour.

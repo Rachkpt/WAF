@@ -24,6 +24,10 @@ SRC_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 APP_DIR="/opt/vuln-app"
 APP_USER="vulnapp"
 
+# Sans aucune option et dans un terminal : on lance l'assistant
+INTERACTIVE=0
+if [[ $# -eq 0 && -t 0 ]]; then INTERACTIVE=1; fi
+
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --port) PORT="$2"; shift 2 ;;
@@ -36,6 +40,52 @@ done
 
 log() { echo -e "\e[1;34m[vuln-app]\e[0m $*"; }
 die() { echo -e "\e[1;31m[erreur]\e[0m $*" >&2; exit 1; }
+
+port_in_use() {
+  command -v ss >/dev/null 2>&1 || return 1
+  [[ -n "$(ss -ltnH "sport = :$1" 2>/dev/null)" ]]
+}
+port_used_by_other_nginx_site() {
+  local f
+  for f in /etc/nginx/sites-enabled/*; do
+    [[ -e "$f" ]] || continue
+    [[ "$(basename "$f")" == "vuln-app" ]] && continue
+    if grep -qE "^[[:space:]]*listen[[:space:]]+(\[::\]:)?$1([[:space:];]|\$)" "$f"; then return 0; fi
+  done
+  return 1
+}
+port_is_free() {
+  if port_in_use "$1"; then
+    ss -ltnpH "sport = :$1" 2>/dev/null | grep -q nginx || return 1
+  fi
+  ! port_used_by_other_nginx_site "$1"
+}
+
+# Assistant : une seule question utile, le port
+wizard() {
+  echo ""
+  echo -e "\e[1mDéploiement de la cible Vuln-App\e[0m"
+  echo "  C'est une application volontairement vulnérable, pour tester le WAF."
+  echo ""
+  local answer
+  while true; do
+    read -r -p "  Sur quel port veux-tu la cible ? [8081] : " answer || die "Entrée interrompue."
+    answer="${answer:-8081}"
+    if ! [[ "$answer" =~ ^[0-9]+$ ]] || (( answer < 1 || answer > 65535 )); then
+      echo "    → Port invalide."; continue
+    fi
+    if port_is_free "$answer"; then
+      PORT="$answer"; break
+    fi
+    echo "    → Le port $answer est déjà utilisé."
+    echo "      Port libre suggéré : $(for p in 8081 8082 8088 8888 9081; do port_is_free $p && { echo $p; break; }; done)"
+  done
+  echo ""
+  read -r -p "  Lancer le déploiement sur le port $PORT ? [o/n, défaut: o] : " answer || die "Entrée interrompue."
+  case "${answer:-o}" in o|O|oui|y|yes) : ;; *) echo "Annulé. Rien n'a été modifié."; exit 0 ;; esac
+}
+
+if (( INTERACTIVE )); then wizard; fi
 
 detect_os() {
   [[ -f /etc/os-release ]] || die "Impossible de détecter le système (/etc/os-release manquant)."

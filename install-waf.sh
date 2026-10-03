@@ -15,6 +15,7 @@
 #   --modsec-branch BRANCH  branche ModSecurity à suivre (défaut: v3/master)
 #   --install-dir PATH      dossier des sources compilées (défaut: /opt)
 #   --attach-to SITE        protège un site Nginx EXISTANT (sans changer son port)
+#   --proxy-to URL          WAF sur --port, qui transmet au site réel (ex. http://127.0.0.1:8090)
 #   --allow-ip IP[/CIDR]    IP de confiance qui ne passe pas par le WAF (répétable)
 #   --skip-site             ne touche pas à la config Nginx du site
 #   --force-rebuild         recompile même si rien n'a changé
@@ -43,6 +44,7 @@ FORCE_REBUILD=0
 UPGRADE_SYSTEM=0
 ALLOW_IPS=()
 ATTACH_SITE=""
+PROXY_TO=""
 
 STATE_FILE=/etc/modsecurity/.waf-install-state
 LOG_FILE=/var/log/waf-install.log
@@ -80,6 +82,7 @@ while [[ $# -gt 0 ]]; do
     --install-dir)          INSTALL_DIR="${2:-}"; shift 2 ;;
     --allow-ip)             ALLOW_IPS+=("${2:-}"); shift 2 ;;
     --attach-to)            ATTACH_SITE="${2:-}"; shift 2 ;;
+    --proxy-to)             PROXY_TO="${2:-}"; shift 2 ;;
     --skip-site)            SKIP_SITE=1; shift ;;
     --force-rebuild)        FORCE_REBUILD=1; shift ;;
     --upgrade-system)       UPGRADE_SYSTEM=1; shift ;;
@@ -119,6 +122,10 @@ validate_args() {
     || die "--crs-version invalide : '$CRS_VERSION'"
   if [[ -n "$ATTACH_SITE" ]]; then
     [[ "$ATTACH_SITE" =~ ^[A-Za-z0-9._-]+$ ]] || die "--attach-to invalide : '$ATTACH_SITE'"
+  fi
+  if [[ -n "$PROXY_TO" ]]; then
+    [[ -z "$ATTACH_SITE" ]] || die "--attach-to et --proxy-to sont incompatibles (choisis l'un des deux)."
+    [[ "$PROXY_TO" =~ ^https?://[A-Za-z0-9._-]+:[0-9]+/?$ ]]       || die "--proxy-to invalide : '$PROXY_TO' (ex. http://127.0.0.1:8090)"
   fi
   for ip in ${ALLOW_IPS[@]+"${ALLOW_IPS[@]}"}; do
     valid_ipv4_or_cidr "$ip" || die "--allow-ip invalide : '$ip' (ex. 203.0.113.5 ou 10.0.0.0/24)"
@@ -491,11 +498,7 @@ write_nginx_site() {
     attach_to_site
     return
   fi
-  mkdir -p "$WEB_ROOT" "$BACKUP_DIR"
-  if [[ ! -f "$WEB_ROOT/index.html" ]]; then
-    echo "<h1>Site protege par WAF</h1>" > "$WEB_ROOT/index.html"
-  fi
-
+  mkdir -p "$BACKUP_DIR"
   SITE_FILE="/etc/nginx/sites-available/$SITE_NAME"
   if [[ -f "$SITE_FILE" ]]; then
     SITE_EXISTED=1
@@ -503,7 +506,31 @@ write_nginx_site() {
     cp -a "$SITE_FILE" "$SITE_BACKUP"
   fi
 
-  cat > "$SITE_FILE" <<EOF
+  if [[ -n "$PROXY_TO" ]]; then
+    # WAF devant un site qui tourne sur un autre port : le WAF filtre, puis transmet
+    cat > "$SITE_FILE" <<EOF
+server {
+    listen ${LISTEN_PORT};
+    server_name ${SERVER_NAME};
+
+    modsecurity on;
+    modsecurity_rules_file /etc/modsecurity/main.conf;
+
+    location / {
+        proxy_pass ${PROXY_TO};
+        proxy_set_header Host \$host;
+        proxy_set_header X-Real-IP \$remote_addr;
+        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+    }
+}
+EOF
+    ok "Site WAF '$SITE_NAME' : écoute sur $LISTEN_PORT, transmet à $PROXY_TO"
+  else
+    mkdir -p "$WEB_ROOT"
+    if [[ ! -f "$WEB_ROOT/index.html" ]]; then
+      echo "<h1>Site protege par WAF</h1>" > "$WEB_ROOT/index.html"
+    fi
+    cat > "$SITE_FILE" <<EOF
 server {
     listen ${LISTEN_PORT};
     server_name ${SERVER_NAME};
@@ -519,17 +546,11 @@ server {
     }
 }
 EOF
-  ln -sf "$SITE_FILE" "/etc/nginx/sites-enabled/$SITE_NAME"
-
-  # Le site par défaut d'Ubuntu n'est PAS supprimé : seul son lien est retiré (réversible).
-  if [[ -z "$ATTACH_SITE" && -L /etc/nginx/sites-enabled/default ]]; then
-    rm -f /etc/nginx/sites-enabled/default
-    ok "Site par défaut désactivé (sites-available/default conservé, réactivable avec ln -s)"
-  elif [[ -e /etc/nginx/sites-enabled/default ]]; then
-    mv /etc/nginx/sites-enabled/default "$BACKUP_DIR/default.enabled"
-    ok "Site par défaut mis de côté dans $BACKUP_DIR"
+    ok "Site Nginx '$SITE_NAME' configuré (port $LISTEN_PORT, root $WEB_ROOT)"
   fi
-  ok "Site Nginx '$SITE_NAME' configuré (port $LISTEN_PORT, root $WEB_ROOT)"
+  ln -sf "$SITE_FILE" "/etc/nginx/sites-enabled/$SITE_NAME"
+  # Le site par défaut et les autres sites ne sont JAMAIS modifiés : le contrôle de port
+  # (preflight) a déjà refusé tout conflit de port avant d'arriver ici.
 }
 
 # Ouvre le port dans UFW s'il est actif (sinon le port est injoignable depuis le réseau)
@@ -696,9 +717,29 @@ interactive_wizard() {
     if [[ "$port" == "?" ]]; then
       die "Impossible de lire le port du site '$name'. Lance avec : sudo ./install-waf.sh --attach-to $name"
     fi
-    echo "  → Site choisi : $name (port $port). Il va être protégé, son port ne change pas."
-    ATTACH_SITE="$name"
+    echo "  → Site choisi : $name (port $port)."
+    echo ""
+    echo "  Où doit écouter le WAF ?"
+    echo "    1) Sur le même port que le site ($port) : le site est protégé directement (recommandé)"
+    echo "    2) Sur un autre port : le WAF se place devant le site et lui transmet le trafic"
+    while true; do
+      ask_text "Ton choix" "1"
+      case "$ANSWER" in
+        1) ATTACH_SITE="$name"; break ;;
+        2)
+          echo "    ⚠️  Pour que le WAF soit vraiment devant le site, les visiteurs doivent passer"
+          echo "       par le NOUVEAU port. Ferme l'ancien port au public après (ex. sudo ufw deny $port/tcp)."
+          ask_new_site_port
+          PROXY_TO="http://127.0.0.1:$port"
+          break ;;
+        *) echo "    → Tape 1 ou 2." ;;
+      esac
+    done
   else
+    if (( ${#sites[@]} > 0 )); then
+      echo "  ⚠️  Les sites existants ne seront PAS protégés par ce nouveau WAF (ils restent sur leur port)."
+      echo "     Pour les protéger, relance l'assistant et réponds « o » à la première question."
+    fi
     echo "  → Nouveau site WAF."
     ask_new_site_port
   fi
@@ -725,7 +766,9 @@ interactive_wizard() {
   echo ""
   echo -e "\e[1mRécapitulatif :\e[0m"
   if [[ -n "$ATTACH_SITE" ]]; then
-    echo "    Site protégé  : $ATTACH_SITE (port $port)"
+    echo "    Site protégé  : $ATTACH_SITE (port $port, même port)"
+  elif [[ -n "$PROXY_TO" ]]; then
+    echo "    WAF devant    : port $LISTEN_PORT → transmet à $PROXY_TO"
   else
     echo "    Nouveau site  : port $LISTEN_PORT"
   fi
